@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Bot config / secrets
+config.py
+config.json
+.env
+*.env
+secrets.py
+token.txt
+
+# Logs
+*.log
+logs/
+
+# Setup flags
+.sml_setup_done
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SSH keys (never commit!)
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
