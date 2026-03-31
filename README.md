@@ -40,7 +40,7 @@ On first run, it installs and configures everything automatically. On every boot
 |---|---|
 | System Update | Auto-updates packages on first run |
 | Python 3.10 | Installs if not already present |
-| Virtual Environment | Creates isolated venv at `~/.venv/smlbot` |
+| Virtual Environment | Creates isolated venv at `~/.venv/lainbot` |
 | Speedtest-cli | Installs speedtest module inside venv |
 | Auto Venv Activate | Activates venv on every SSH login |
 | Systemd Service | Registers Lain Panel as a system service, auto-runs on every boot |
@@ -93,16 +93,16 @@ After setup, Lain Panel runs as a systemd service and auto-starts on every reboo
 
 ```bash
 # Check status
-sudo systemctl status vps-manager
+sudo systemctl status lain-panel
 
 # Restart
-sudo systemctl restart vps-manager
+sudo systemctl restart lain-panel
 
 # Live logs
-journalctl -u vps-manager -f
+journalctl -u lain-panel -f
 
 # Stop
-sudo systemctl stop vps-manager
+sudo systemctl stop lain-panel
 ```
 
 ---
@@ -120,7 +120,7 @@ Then logout and login again.
 ## Re-Run Full Setup
 
 ```bash
-rm ~/.sml_setup_done
+rm ~/.lain_setup_done
 bash setup.sh
 ```
 
@@ -129,7 +129,7 @@ bash setup.sh
 ## View Setup Logs
 
 ```bash
-cat ~/.sml_setup.log
+cat ~/.lain_setup.log
 ```
 
 ---

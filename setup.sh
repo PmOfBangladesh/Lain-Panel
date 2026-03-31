@@ -3,7 +3,7 @@
 #   Lain Panel — VPS Auto Setup & Status Script
 #   "Present day, present time." — Serial Experiments Lain
 #   By SML The Unknown — @codeninjaxd
-#   GitHub: https://github.com/PmOfBangladesh/SML-AutoSetup
+#   GitHub: https://github.com/PmOfBangladesh/Lain-Panel
 # ============================================================
 
 # ── Colors ───────────────────────────────────────────────────

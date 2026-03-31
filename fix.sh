@@ -1,11 +1,13 @@
 #!/bin/bash
 # ============================================================
-#   fix.sh —
-#   
+#   fix.sh — Fix venv auto-activate hook for Lain Panel
+#   "Present day, present time." — Serial Experiments Lain
+#   By SML The Unknown — @codeninjaxd
+#   GitHub: https://github.com/PmOfBangladesh/Lain-Panel
 # ============================================================
 
-VENV_DIR="$HOME/.venv/smlbot"
-MARKER="# SML_VENV_HOOK"
+VENV_DIR="$HOME/.venv/lainbot"
+MARKER="# LAIN_VENV_HOOK"
 
 echo ""
 echo -e "\033[1;36m  ▶ Fixing venv auto-activate on login...\033[0m"
