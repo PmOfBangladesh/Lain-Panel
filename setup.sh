@@ -98,8 +98,16 @@ run_speedtest() {
 
     (
         if command -v speedtest &>/dev/null; then
-            # Ookla official CLI
-            timeout 30 speedtest --accept-license --accept-gdpr --simple > "$tmpfile" 2>/dev/null
+            # `speedtest` binary present — could be Ookla's official CLI
+            # (needs --accept-license --accept-gdpr) or the classic
+            # sivel/speedtest-cli tool (doesn't recognize those flags).
+            # Try Ookla-style first, fall back if the flags are rejected.
+            local raw
+            raw=$(timeout 30 speedtest --accept-license --accept-gdpr --simple 2>&1)
+            if [ $? -ne 0 ] || echo "$raw" | grep -qi "unrecognized arguments"; then
+                raw=$(timeout 30 speedtest --simple 2>&1)
+            fi
+            echo "$raw" > "$tmpfile"
         else
             # Fallback: Python speedtest-cli module inside venv
             source "$VENV_DIR/bin/activate" 2>/dev/null
@@ -159,7 +167,9 @@ print_sysinfo() {
     disk_total=$(df -h / 2>/dev/null | awk 'NR==2{print $2}' || echo "?")
     disk_used=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || echo "?")
     uptime_str=$(uptime -p 2>/dev/null || echo "unknown")
-    boot_time=$(who -b 2>/dev/null | awk '{print $3, $4}' || echo "unknown")
+    boot_time=$(who -b 2>/dev/null | awk '{print $3, $4}')
+    [ -z "$boot_time" ] && boot_time=$(uptime -s 2>/dev/null)
+    [ -z "$boot_time" ] && boot_time="unknown"
 
     echo -e "${BOLD}${CYAN}  ╔══════════════════════════════════════╗${RESET}"
     echo -e "${BOLD}${CYAN}  ║     System Information — Node        ║${RESET}"
