@@ -24,24 +24,25 @@ SERVICE_NAME="lain-panel"
 SCRIPT_PATH="$(realpath "$0")"
 SETUP_DONE_FLAG="$HOME/.lain_setup_done"
 LOG_FILE="$HOME/.lain_setup.log"
+LOCK_FILE="/tmp/lain_panel.lock"
 
 # ── Welcome Animation ─────────────────────────────────────────
 welcome_animation() {
     clear
     echo ""
-    sleep 0.2
+    sleep 0.05
 
     local msg="  Connecting to the Wired"
     local dots="........"
     echo -ne "${BOLD}${CYAN}"
     for (( i=0; i<${#msg}; i++ )); do
         echo -ne "${msg:$i:1}"
-        sleep 0.05
+        sleep 0.01
     done
     echo -ne "${MAGENTA}"
     for (( i=0; i<${#dots}; i++ )); do
         echo -ne "${dots:$i:1}"
-        sleep 0.15
+        sleep 0.03
     done
     echo -e "${RESET}"
     echo ""
@@ -49,11 +50,11 @@ welcome_animation() {
     echo -ne "  ${DIM}Loading Lain Panel${RESET}  ${CYAN}["
     for i in {1..25}; do
         echo -ne "${MAGENTA}█${RESET}"
-        sleep 0.03
+        sleep 0.01
     done
     echo -e "${CYAN}]${RESET}  ${BOLD}${GREEN}Connected${RESET}"
     echo ""
-    sleep 0.5
+    sleep 0.08
     clear
 }
 
@@ -82,6 +83,9 @@ print_banner() {
 }
 
 # ── Speedtest ─────────────────────────────────────────────────
+# Uses the Ookla Speedtest CLI (the `speedtest` binary) directly,
+# instead of the Python speedtest-cli module, since that's what
+# actually works reliably on the host.
 run_speedtest() {
     echo -e "${BOLD}${CYAN}  ╔══════════════════════════════════════╗${RESET}"
     echo -e "${BOLD}${CYAN}  ║      Speed Test — Wired Speed        ║${RESET}"
@@ -89,35 +93,53 @@ run_speedtest() {
     echo ""
     echo -ne "  ${DIM}Measuring connection to the Wired${RESET}  ${CYAN}["
 
-    local tmpfile=$(mktemp)
-    (source "$VENV_DIR/bin/activate" 2>/dev/null
-     python -m speedtest --simple 2>/dev/null > "$tmpfile"
-     deactivate 2>/dev/null) &
+    local tmpfile
+    tmpfile=$(mktemp)
+
+    (
+        if command -v speedtest &>/dev/null; then
+            # Ookla official CLI
+            timeout 30 speedtest --accept-license --accept-gdpr --simple > "$tmpfile" 2>/dev/null
+        else
+            # Fallback: Python speedtest-cli module inside venv
+            source "$VENV_DIR/bin/activate" 2>/dev/null
+            timeout 20 python -m speedtest --simple 2>/dev/null > "$tmpfile"
+            deactivate 2>/dev/null
+        fi
+    ) &
     local pid=$!
 
     local spin=0
-    while kill -0 $pid 2>/dev/null; do
+    while kill -0 "$pid" 2>/dev/null; do
         echo -ne "${MAGENTA}█${RESET}"
         sleep 0.15
         spin=$((spin+1))
-        if [ $spin -ge 20 ]; then break; fi
+        if [ "$spin" -ge 20 ]; then
+            break
+        fi
     done
-    wait $pid 2>/dev/null
 
-    for (( r=spin; r<20; r++ )); do echo -ne "${MAGENTA}█${RESET}"; done
+    wait "$pid" 2>/dev/null
+
+    for (( r=spin; r<20; r++ )); do
+        echo -ne "${MAGENTA}█${RESET}"
+    done
     echo -e "${CYAN}]${RESET}  ${BOLD}${GREEN}Connected${RESET}"
     echo ""
 
     if [ -s "$tmpfile" ]; then
-        local ping=$(grep Ping "$tmpfile" | awk '{print $2, $3}')
-        local down=$(grep Download "$tmpfile" | awk '{print $2, $3}')
-        local up=$(grep Upload "$tmpfile" | awk '{print $2, $3}')
+        local ping down up
+        ping=$(grep -i "Ping\|Latency" "$tmpfile" | head -n1 | awk '{print $2, $3}')
+        down=$(grep -i "Download" "$tmpfile" | head -n1 | awk '{print $2, $3}')
+        up=$(grep -i "Upload" "$tmpfile" | head -n1 | awk '{print $2, $3}')
+
         echo -e "  ${YELLOW}  Latency   ${CYAN}➜${RESET}  ${WHITE}${ping:-N/A}${RESET}"
         echo -e "  ${YELLOW}  Download  ${CYAN}➜${RESET}  ${GREEN}${down:-N/A}${RESET}"
         echo -e "  ${YELLOW}  Upload    ${CYAN}➜${RESET}  ${MAGENTA}${up:-N/A}${RESET}"
     else
-        echo -e "  ${YELLOW}  ⚠ Connection to the Wired failed.${RESET}"
+        echo -e "  ${YELLOW}  ⚠ Connection to the Wired failed or timed out.${RESET}"
     fi
+
     rm -f "$tmpfile"
     echo ""
 }
@@ -166,17 +188,24 @@ warn() { log "${YELLOW}  ⚠ $1${RESET}"; }
 
 is_first_run() { [ ! -f "$SETUP_DONE_FLAG" ]; }
 
+acquire_lock() {
+    exec 200>"$LOCK_FILE"
+    flock -n 200 || exit 0
+}
+
 # ── 1. System Update ──────────────────────────────────────────
 do_system_update() {
     step "Updating system nodes..."
     if command -v dnf &>/dev/null; then
         sudo dnf update -y >> "$LOG_FILE" 2>&1
     elif command -v apt &>/dev/null; then
-        sudo apt update -y && sudo apt upgrade -y >> "$LOG_FILE" 2>&1
+        sudo apt update -y >> "$LOG_FILE" 2>&1
+        sudo apt upgrade -y >> "$LOG_FILE" 2>&1
     elif command -v yum &>/dev/null; then
         sudo yum update -y >> "$LOG_FILE" 2>&1
     else
-        warn "Package manager not found, skipping."; return
+        warn "Package manager not found, skipping."
+        return
     fi
     ok "System updated."
 }
@@ -185,19 +214,27 @@ do_system_update() {
 do_python_install() {
     step "Checking Python ${PYTHON_VERSION}..."
     if python3.10 --version &>/dev/null; then
-        ok "Python 3.10 already installed: $(python3.10 --version)"; return
+        ok "Python 3.10 already installed: $(python3.10 --version)"
+        return
     fi
+
     log "  Installing Python ${PYTHON_VERSION}..."
+
     if command -v dnf &>/dev/null; then
         sudo dnf install -y python3.10 python3.10-devel python3.10-pip >> "$LOG_FILE" 2>&1 || \
-        (sudo dnf install -y gcc openssl-devel bzip2-devel libffi-devel zlib-devel wget >> "$LOG_FILE" 2>&1 && \
-         cd /tmp && wget -q https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz && \
-         tar xzf Python-3.10.14.tgz && cd Python-3.10.14 && \
-         ./configure --enable-optimizations >> "$LOG_FILE" 2>&1 && \
-         sudo make altinstall >> "$LOG_FILE" 2>&1)
+        (
+            sudo dnf install -y gcc openssl-devel bzip2-devel libffi-devel zlib-devel wget >> "$LOG_FILE" 2>&1 && \
+            cd /tmp && \
+            wget -q https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz && \
+            tar xzf Python-3.10.14.tgz && \
+            cd Python-3.10.14 && \
+            ./configure --enable-optimizations >> "$LOG_FILE" 2>&1 && \
+            sudo make altinstall >> "$LOG_FILE" 2>&1
+        )
     elif command -v apt &>/dev/null; then
         sudo apt install -y python3.10 python3.10-venv python3.10-dev >> "$LOG_FILE" 2>&1
     fi
+
     ok "Python 3.10 installed."
 }
 
@@ -205,12 +242,14 @@ do_python_install() {
 do_venv_setup() {
     step "Creating virtual environment at $VENV_DIR..."
     mkdir -p "$(dirname "$VENV_DIR")"
+
     if [ ! -d "$VENV_DIR" ]; then
         python3.10 -m venv "$VENV_DIR" >> "$LOG_FILE" 2>&1
         ok "Virtual environment created."
     else
         ok "Virtual environment already exists."
     fi
+
     source "$VENV_DIR/bin/activate"
     pip install --upgrade pip >> "$LOG_FILE" 2>&1
     ok "pip upgraded."
@@ -218,8 +257,37 @@ do_venv_setup() {
 }
 
 # ── 4. Speedtest ──────────────────────────────────────────────
+# Prefer the Ookla CLI (`speedtest` binary) since it's the most
+# reliable option. Only install the Python speedtest-cli module
+# as a fallback when the Ookla CLI isn't present.
 do_speedtest_install() {
-    step "Installing speedtest-cli..."
+    step "Setting up speedtest..."
+
+    if command -v speedtest &>/dev/null; then
+        ok "Ookla Speedtest CLI already installed: $(speedtest --version 2>/dev/null | head -n1)"
+        return
+    fi
+
+    warn "Ookla Speedtest CLI not found — attempting to install it."
+
+    if command -v apt &>/dev/null; then
+        (
+            curl -s https://install.speedtest.net/app/cli/install.deb.sh | sudo bash >> "$LOG_FILE" 2>&1 && \
+            sudo apt install -y speedtest >> "$LOG_FILE" 2>&1
+        )
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+        (
+            curl -s https://install.speedtest.net/app/cli/install.rpm.sh | sudo bash >> "$LOG_FILE" 2>&1 && \
+            sudo dnf install -y speedtest 2>>"$LOG_FILE" || sudo yum install -y speedtest >> "$LOG_FILE" 2>&1
+        )
+    fi
+
+    if command -v speedtest &>/dev/null; then
+        ok "Ookla Speedtest CLI installed."
+        return
+    fi
+
+    warn "Could not install Ookla CLI, falling back to Python speedtest-cli."
     source "$VENV_DIR/bin/activate"
     if python -c "import speedtest" &>/dev/null; then
         ok "speedtest-cli already installed."
@@ -238,7 +306,11 @@ do_shell_hook() {
 
     add_venv_hook() {
         local f=$1
-        grep -q "$VENV_MARKER" "$f" 2>/dev/null && { ok "Venv hook already in $f"; return; }
+        grep -q "$VENV_MARKER" "$f" 2>/dev/null && {
+            ok "Venv hook already in $f"
+            return
+        }
+
         cat >> "$f" << EOF
 
 $VENV_MARKER
@@ -249,21 +321,25 @@ EOF
 
     add_status_hook() {
         local f=$1
-        grep -q "$STATUS_MARKER" "$f" 2>/dev/null && { ok "Status hook already in $f"; return; }
+        grep -q "$STATUS_MARKER" "$f" 2>/dev/null && {
+            ok "Status hook already in $f"
+            return
+        }
+
         cat >> "$f" << EOF
 
 $STATUS_MARKER
-[ -f "$SCRIPT_PATH" ] && bash "$SCRIPT_PATH" --status
+case \$- in
+  *i*) [ -f "$SCRIPT_PATH" ] && (bash "$SCRIPT_PATH" --status >/dev/tty 2>/dev/tty &) ;;
+esac
 EOF
         ok "Status hook added to $f"
     }
 
-    # Add venv hook to all profiles
     [ -f "$HOME/.bashrc" ]  && add_venv_hook "$HOME/.bashrc"
     [ -f "$HOME/.zshrc" ]   && add_venv_hook "$HOME/.zshrc"
     [ -f "$HOME/.profile" ] && add_venv_hook "$HOME/.profile"
 
-    # .bash_profile — SSH login shell (CentOS/Ubuntu)
     if [ ! -f "$HOME/.bash_profile" ]; then
         cat > "$HOME/.bash_profile" << EOF
 [ -f ~/.bashrc ] && source ~/.bashrc
@@ -272,7 +348,9 @@ EOF
 [ -f "$VENV_DIR/bin/activate" ] && source "$VENV_DIR/bin/activate"
 
 # LAIN_STATUS_HOOK
-[ -f "$SCRIPT_PATH" ] && bash "$SCRIPT_PATH" --status
+case \$- in
+  *i*) [ -f "$SCRIPT_PATH" ] && (bash "$SCRIPT_PATH" --status >/dev/tty 2>/dev/tty &) ;;
+esac
 EOF
         ok "Created ~/.bash_profile with hooks."
     else
@@ -280,7 +358,6 @@ EOF
         add_status_hook "$HOME/.bash_profile"
     fi
 
-    # Also add status to .bashrc for interactive logins
     add_status_hook "$HOME/.bashrc"
 }
 
@@ -320,6 +397,7 @@ mark_done() {
 
 # ── Status Mode ───────────────────────────────────────────────
 run_status_mode() {
+    acquire_lock
     welcome_animation
     print_banner
     run_speedtest
